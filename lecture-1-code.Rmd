@@ -1,0 +1,223 @@
+---
+title: "Lecture 1 - CHI 2022 Course Transparent Practices for Quantitative Empirical Research"
+author: "Chat Wacharamanotham"
+output: html_notebook
+---
+
+# **Purpose**
+
+This R Notebook shows several strategies from frequentist statistics to analyze a dataset. They serve as examples of how to apply [Transparent Statistics Guiding Principles](https://transparentstats.github.io/guidelines/principles.html#guiding-principles).
+
+```{r message=FALSE, warning=FALSE}
+library(MASS)
+library(ordinal)
+library(emmeans)
+library(tidyverse)
+
+# remove spurious warning message from summarize(). For more info see `?summarize`
+options(dplyr.summarise.inform = FALSE)  
+```
+
+# **The dataset**
+
+The dataset is from experiment 1 of "Blinded with Science or Informed by Charts? A Replication Study" [(Dragicevic & Jansen, 2018)](https://doi.org/10.1109/TVCG.2017.2744298)\
+Study participants were shown a vignette of a report about drug effectiveness **with** vs. **without a chart**. The experiment is a between-subjects design. One of the dependent variables is a rating on how they believe in the effectiveness of the drug on a 9-point Likert-style item.
+
+```{r}
+dataset <- 
+  
+  # read the file
+  read_csv("data/blinded.csv",
+           col_types = cols(
+             experiment = col_integer(),
+             condition = col_character(),
+             effectiveness = col_integer())) %>%
+    
+  # select only experiment 1 (out of 4)
+  filter(experiment == "1") %>%
+  
+  # ensure that the condition column has a `factor` data type (required for correct modelling)
+  mutate(condition = factor(condition)) %>% 
+  
+  # adding participant ID
+  mutate(participant_id = str_c("P", str_pad(row_number(), 2, pad = "0"))) %>%
+
+  # extract only three columns that are relevant for this example
+  select(participant_id, condition, effectiveness)
+
+
+# show the output of this code chunk
+dataset
+```
+
+\
+
+The order of the difference is controlled by the order of the factor level of the `condition` column in the dataset. By default, the order is alphabetical:
+
+```{r}
+levels(dataset$condition)
+```
+
+Therefore, in this dataset, all statistical estimates of the difference below will be in the following form:
+
+> `graph` - `no_graph`
+
+This order happens to make sense because `no_graph` condition is considered the baseline. If you need to change the order of a factor in your dataset, check [the section "Modifying factor order" in R4DS book](https://r4ds.had.co.nz/factors.html#modifying-factor-order).
+
+## Data overview
+
+We show an overview of the data in a table and chart below:
+
+```{r}
+dataset %>% 
+  group_by(condition, effectiveness) %>% 
+  summarise(N = n()) %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = condition, values_from = N) %>% 
+  arrange(effectiveness)
+```
+
+```{r fig.height=2, fig.width=5}
+p_condition <- 
+  dataset %>% 
+  
+  # reverse the factor level for a correct plot order
+  mutate(effectiveness = fct_rev(factor(effectiveness, levels = 1:9))) %>%
+  
+  # stacked bar plot
+  ggplot(aes(x = condition, fill = effectiveness)) +
+  geom_bar(position = "stack", stat="count") +
+  
+  # color scale from red (low) to yellow (middle) to green (high)
+  scale_fill_brewer(palette="RdYlGn", drop = FALSE, direction = -1) +
+  
+  # horizontal plot
+  coord_flip() +
+  
+  # legend
+  guides(fill = guide_legend(reverse = TRUE, nrow = 1)) +
+  theme(legend.position = "bottom")
+
+p_condition
+```
+
+```{r}
+dataset %>% 
+  group_by(condition) %>% 
+  summarise(
+    Median = median(effectiveness),
+    IQR = IQR(effectiveness)) 
+```
+
+Data manipulation and charting are out of the scope of this course. We recommend excellent books: [R for Data Science](https://r4ds.had.co.nz/index.html) and [ggplot2](https://ggplot2-book.org). Both are available online free of charge!
+
+# Statistical tests of differences
+
+## 1. Non-parametric test: Mann-Whitney U test or Wilcoxon rank-sum test
+
+The Mann-Whitney U test is the same test as the Wilcoxon rank-sum test ([historical details](https://en.wikipedia.org/wiki/Mann–Whitney_U_test#History)). Both are used to compare two independent samples. In R, these tests are implemented in the `wilcox.test()` function with the parameter `paired = FALSE`.
+
+```{r}
+result_wilcox <- 
+  wilcox.test(
+    effectiveness ~ condition, 
+    data = dataset, 
+    paired = FALSE,
+    conf.int = TRUE)
+result_wilcox
+```
+
+### Discussion: Process Transparency
+
+Consider the following transparent statistics principle:
+
+> [**Process Transparency**](https://transparentstats.github.io/guidelines/principles.html#process-transparency)**:** Communicate the decisions made during the analysis and report writing as explicitly as possible.
+
+Compare the following versions of write-ups:
+
+> A. "The difference is not statistically significant (*p* = 0.5)"
+>
+> B. "The Wilcoxon test is not statistically significant (*W* = 1762, *p* = 0.5)"
+>
+> C. "The Wilcoxon rank sum test is not statistically significant (*W* = 1762, *p* = 0.5)"
+
+Version A does not specify the procedure that was used. In Version B, it was unclear which of the Wilcoxon tests were used. (Between-subjects studies should use the Wilcoxon [rank-sum]{.ul} test, whereas within-subjects studies should use the Wilcoxon [signed-rank]{.ul} test.) Therefore, both versions left the principle of Process Transparency unfulfilled.
+
+### Discussion: Faithfulness and Clarity
+
+Consider the following transparent statistics principles:
+
+> [**Faithfulness**](https://transparentstats.github.io/guidelines/principles.html#faithfulness)**:** Strive to capture and convey the "truth" as accurately as possible, especially concerning the uncertainty within the data.\
+> [**Clarity**](https://transparentstats.github.io/guidelines/principles.html#clarity)**:** Study reports should be easy to process---even when they target experts.
+
+Compare the following versions write-ups:
+
+> D. "The median and IQR of the effectiveness from both the `graph` and the `no_graph` conditions are the same: *Mdn = 7, IQR = 1.* The Wilcoxon rank sum test is not statistically significant (*W* = 1762, *p* = 0.50)"\
+> \
+> E. "The median and IQR of the effectiveness from both the `graph` and the `no_graph` conditions are the same: *Mdn = 7, IQR = 1.* The Wilcoxon rank sum test is not statistically significant (*W* = 1762, *p* = 0.50). The estimated median of the difference between two conditions is 0.00 with the 95% confidence interval [-1.00, 0.00]. "
+
+Both versions exhibit faithfulness to the sample by reporting descriptive statistics (Median and IQR) for each condition. Version E adds the estimation of the difference and its confidence interval, which provides additional insights into inferential statistics beyond the dichotomy of the *p*-values. However, in this example, the lack of the differences, the resolution, and the rounding make the point estimate and confidence intervals not entirely helpful. Therefore, version D already provides sufficient faithfulness while being superior in clarity.
+
+## 2. Using of a parametric *t*-test (controversial)
+
+```{r}
+result_ttest <- 
+  t.test(
+    effectiveness ~ condition, 
+    data = dataset, 
+    paired = FALSE,
+    conf.int = TRUE)
+result_ttest
+```
+
+### Discussion: Robustness
+
+Consider the following transparent statistics principles:
+
+> [**Robustness**](https://transparentstats.github.io/guidelines/principles.html#robustness)**:** Prefer data analysis and reporting strategies that are robust to departures from statistical assumptions---or that make few assumptions
+
+Data from a Likert-style item (one rating question) is in the ordinal scale---which lacks a consistent distance between two equal intervals. For example, consider two intervals:
+
+-   The rating of 5 (the middle of the scale) and 6
+
+-   The rating of 8 and 9
+
+If some people tend to avoid giving extreme answers, the difference between the rating 5 and 6 may be smaller than those of 8 and 9.
+
+*t*-test is a parametric test. It requires data on the interval scale. Therefore, using *t-*test for this dataset violates the principle of Robustness.
+
+> Side note: The discussion above applies to Likert-style [item (]{.ul}a single question). There is evidence that Likert scale (a collection of many items) exhibits interval properties. For pointers on this debate, see ["Resolving the 50-year debate around using and misusing Likert scales" (Cariﬁo & Perla, 2008)](dx.doi.org/10.1111/j.1365-2923.2008.03172.x).
+
+# 3. Ordinal logistic regression
+
+Likert-style items can be analyzed parametrically with the ordinal logistic regression. Lecture 2 will provide a graphical intuition of this process. The frequentist statistics code below is provided here for reference. For mathematical details of ordinal logistic regression, check out [this video by Gregg Harbaugh on YouTube](https://www.youtube.com/watch?v=jWIJ7P1G9P4).
+
+```{r}
+model_olr <- 
+  dataset %>% 
+  mutate(effectiveness = ordered(effectiveness, levels = as.character(1:9))) %>% 
+  clm(effectiveness ~ condition,
+      data = .)
+```
+
+```{r}
+anova(model_olr, type = "3")
+```
+
+```{r}
+emmeans(model_olr,  ~ condition)
+```
+
+```{r}
+confint(model_olr)
+```
+
+# Packages Information
+
+In the HTML version of this notebook (`.nb.html`) you will see the list of packages used in the execution of this R Notebook. This list of packages facilitates reproducibility of the code. For a more comprehensive and robust solution, check the [`rrtools`](https://github.com/benmarwick/rrtools) package.
+
+```{r}
+
+sessionInfo()
+
+```
